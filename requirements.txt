@@ -1,24 +1,11 @@
-# Core ML dependencies
-torch==2.1.2+cpu
+# Core dependencies (no torch)
 numpy==1.24.3
 pandas==2.0.3
 scikit-learn==1.3.0
 joblib==1.3.2
-
-# TabNet
-pytorch-tabnet==4.0.2
-
-# Web framework
 fastapi==0.104.1
 uvicorn==0.24.0
-python-multipart==0.0.6
-
-# Excel support
 openpyxl==3.1.2
-
-# Pydantic
 pydantic==2.4.2
-pydantic-core==2.10.1
-
-# Optional
-python-dotenv==1.0.0
+python-multipart==0.0.6
+pytorch-tabnet==4.0.2
