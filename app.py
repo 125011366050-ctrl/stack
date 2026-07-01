@@ -1,6 +1,8 @@
 import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+
 from engine import GlucoseEngine
-from utils import validate_glucose_input
 
 @st.cache_resource
 def load_engine():
@@ -10,33 +12,44 @@ engine = load_engine()
 
 st.title("🩺 CDSS - Diabetes Decision Support System")
 
+st.subheader("📥 Enter Last 10 CGM Readings (5-min intervals)")
+
+default_rows = pd.DataFrame({
+    "Time": [(datetime.now() - timedelta(minutes=5 * i)).strftime("%H:%M") for i in range(9, -1, -1)],
+    "Glucose": [120] * 10,
+    "HR": [75] * 10,
+    "Meal_Flag": [0] * 10,
+    "Carbs": [0] * 10,
+    "Protein": [0] * 10,
+    "Fat": [0] * 10,
+    "Fiber": [0] * 10,
+    "Calories": [0] * 10,
+})
+
+entries = st.data_editor(
+    default_rows,
+    num_rows="fixed",
+    use_container_width=True,
+    column_config={
+        "Glucose": st.column_config.NumberColumn(min_value=40, max_value=400),
+        "HR": st.column_config.NumberColumn(min_value=30, max_value=220),
+        "Meal_Flag": st.column_config.NumberColumn(min_value=0, max_value=1, step=1),
+    }
+)
+st.caption("Only 10 readings needed — the model pads its 36-step window automatically.")
+
 col1, col2 = st.columns(2)
 with col1:
-    risk = st.selectbox("Risk Level", ["low", "medium", "high"])
-    current_glucose = st.number_input("Current Glucose (mg/dL)", 40, 400, 120)
     carbs_limit = st.number_input("Carbs Limit (g)", 0, 200, 50)
 with col2:
     meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
-    predictions = st.text_input("Past Predictions (comma-separated)", "120,130,140")
-    uncertainty = st.number_input("Uncertainty", 0.0, 1.0, 0.2)
 
 if st.button("Run CDSS Analysis"):
     try:
-        history = [float(x) for x in predictions.split(",")] + [current_glucose]
-
-        payload = validate_glucose_input({
-            "current_glucose": current_glucose,
-            "carbs_limit": carbs_limit,
-            "meal_type": meal_type,
-            "predictions": history,
-            "uncertainty": uncertainty,
-            "risk": {"type": "NORMAL"}
-        })
-
         result = engine.run(
-            glucose_history=history,
-            carbs_limit=payload["carbs_limit"],
-            meal_type=payload["meal_type"]
+            entries=entries,
+            carbs_limit=carbs_limit,
+            meal_type=meal_type
         )
 
         st.subheader("📈 Glucose Forecast")
@@ -47,10 +60,10 @@ if st.button("Run CDSS Analysis"):
         c3.metric("120 min", f"{preds.get('120min', 0)} mg/dL")
 
         st.subheader("🍽️ Food Recommendations")
-        foods = result["recommendation"]["foods"]
-        st.dataframe(foods)
+        st.dataframe(result["recommendation"]["foods"])
 
         st.subheader("🏃 Activity Recommendation")
+        current_glucose = float(entries["Glucose"].iloc[-1])
         if current_glucose > 180:
             activity = "🚶 Light walking (10–15 min) recommended"
         elif current_glucose < 80:
