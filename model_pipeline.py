@@ -10,23 +10,21 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+
+# ==========================
+# FIXED FEATURE ORDER (Meal_Flag REMOVED)
+# ==========================
 FEATURE_ORDER = [
     "GL", "GL_MA_5", "GL_STD_5", "GL_Diff", "GL_Slope", "GL_Acceleration",
-    "CV_Glucose", "HR", "HR_MA_5", "Meal_Flag", "Calories", "Carbs",
-    "Protein", "Fat", "Fiber", "Hour", "DayOfWeek", "IsNight"
-]
-
-META_FEATURE_ORDER = [
-    "LSTM_30min", "LSTM_60min", "LSTM_120min",
-    "TabNet_30min", "TabNet_60min", "TabNet_120min",
-    "Last_Glucose", "Mean_Glucose", "Std_Glucose", "Slope",
-    "Max_Glucose", "Min_Glucose", "Glucose_Range",
-    "CV_Glucose", "Glucose_Variability"
+    "CV_Glucose", "HR", "HR_MA_5",
+    "Calories", "Carbs",
+    "Protein", "Fat", "Fiber",
+    "Hour", "DayOfWeek", "IsNight"
 ]
 
 
 class LSTMForecaster(nn.Module):
-    """Matches stack_lstm_best.pth state_dict: 2-layer LSTM(18->128), FC(128->3)."""
+    """LSTM model: (18 → 128 → 3)"""
     def __init__(self, input_size=18, hidden_size=128, num_layers=2, output_size=3):
         super().__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
@@ -39,15 +37,16 @@ class LSTMForecaster(nn.Module):
 
 
 class StackingPredictor:
-    """Loads LSTM + TabNet base models and XGBoost meta-learners, runs full inference."""
 
     def __init__(self):
         self.lstm = self._load_lstm()
         self.tabnet = {h: self._load_tabnet(p) for h, p in Config.TABNET_PATHS.items()}
         self.xgb_meta = {h: self._load_xgb(p) for h, p in Config.XGB_META_PATHS.items()}
+
         with open(Config.STACK_CONFIG_PATH, "rb") as f:
             self.stack_config = pickle.load(f)
-        logger.info("Stacking ensemble loaded: LSTM + TabNet(x3) + XGBoost(x3)")
+
+        logger.info("Stacking ensemble loaded successfully")
 
     def _load_lstm(self):
         model = LSTMForecaster()
@@ -69,40 +68,50 @@ class StackingPredictor:
     # FEATURE ENGINEERING
     # ==========================
     def build_window(self, entries: pd.DataFrame) -> pd.DataFrame:
-        """
-        entries: DataFrame with columns
-        [Time, Glucose, HR, Meal_Flag, Carbs, Protein, Fat, Fiber, Calories]
-        Rows are the user's real readings (oldest -> newest).
-        Pads backward to Config.WINDOW_SIZE by repeating the oldest row.
-        """
+
         df = entries.copy().reset_index(drop=True)
+
         df["Time"] = pd.to_datetime(df["Time"], format="%H:%M", errors="coerce")
         df["Hour"] = df["Time"].dt.hour.fillna(12).astype(int)
         df["DayOfWeek"] = pd.Timestamp.now().dayofweek
         df["IsNight"] = df["Hour"].apply(lambda h: 1 if (h < 6 or h >= 22) else 0)
+
         df = df.rename(columns={"Glucose": "GL"})
 
+        # Pad to window size
         n_missing = Config.WINDOW_SIZE - len(df)
         if n_missing > 0:
             pad_row = df.iloc[[0]]
             padding = pd.concat([pad_row] * n_missing, ignore_index=True)
             df = pd.concat([padding, df], ignore_index=True)
 
+        # Feature engineering
         df["GL_MA_5"] = df["GL"].rolling(5, min_periods=1).mean()
         df["GL_STD_5"] = df["GL"].rolling(5, min_periods=1).std().fillna(0)
         df["GL_Diff"] = df["GL"].diff().fillna(0)
         df["GL_Slope"] = df["GL_Diff"] / 5.0
         df["GL_Acceleration"] = df["GL_Diff"].diff().fillna(0)
-        df["CV_Glucose"] = (df["GL"].rolling(5, min_periods=1).std() /
-                             df["GL"].rolling(5, min_periods=1).mean()).fillna(0) * 100
+
+        df["CV_Glucose"] = (
+            df["GL"].rolling(5, min_periods=1).std() /
+            df["GL"].rolling(5, min_periods=1).mean()
+        ).fillna(0) * 100
+
         df["HR_MA_5"] = df["HR"].rolling(5, min_periods=1).mean()
 
+        # FINAL SAFE FEATURE SELECTION
         return df[FEATURE_ORDER]
 
-    def _summary_stats(self, real_entries: pd.DataFrame) -> dict:
+    # ==========================
+    # SUMMARY FEATURES
+    # ==========================
+    def _summary_stats(self, real_entries: pd.DataFrame):
+
         gl = real_entries["Glucose"].astype(float)
+
         std = gl.std() if len(gl) > 1 else 0.0
         mean = gl.mean()
+
         return {
             "Last_Glucose": gl.iloc[-1],
             "Mean_Glucose": mean,
@@ -116,19 +125,22 @@ class StackingPredictor:
         }
 
     # ==========================
-    # INFERENCE
+    # PREDICTION
     # ==========================
-    def predict(self, real_entries: pd.DataFrame) -> dict:
+    def predict(self, real_entries: pd.DataFrame):
+
         window_df = self.build_window(real_entries)
-        window_arr = window_df.values.astype(np.float32)  # (36, 18)
+        window_arr = window_df.values.astype(np.float32)
 
-        # LSTM: sequence input
-        lstm_input = torch.tensor(window_arr).unsqueeze(0)  # (1, 36, 18)
+        # LSTM input
+        lstm_input = torch.tensor(window_arr).unsqueeze(0)
+
         with torch.no_grad():
-            lstm_out = self.lstm(lstm_input).squeeze(0).numpy()  # (3,)
+            lstm_out = self.lstm(lstm_input).squeeze(0).numpy()
 
-        # TabNet: flattened input
-        flat_input = window_arr.flatten().reshape(1, -1)  # (1, 648)
+        # TabNet input
+        flat_input = window_arr.flatten().reshape(1, -1)
+
         tabnet_out = {
             h: float(model.predict(flat_input)[0][0])
             for h, model in self.tabnet.items()
@@ -137,11 +149,23 @@ class StackingPredictor:
         stats = self._summary_stats(real_entries)
 
         meta_vector = np.array([[
+
             lstm_out[0], lstm_out[1], lstm_out[2],
-            tabnet_out["30min"], tabnet_out["60min"], tabnet_out["120min"],
-            stats["Last_Glucose"], stats["Mean_Glucose"], stats["Std_Glucose"],
-            stats["Slope"], stats["Max_Glucose"], stats["Min_Glucose"],
-            stats["Glucose_Range"], stats["CV_Glucose"], stats["Glucose_Variability"],
+
+            tabnet_out["30min"],
+            tabnet_out["60min"],
+            tabnet_out["120min"],
+
+            stats["Last_Glucose"],
+            stats["Mean_Glucose"],
+            stats["Std_Glucose"],
+            stats["Slope"],
+            stats["Max_Glucose"],
+            stats["Min_Glucose"],
+            stats["Glucose_Range"],
+            stats["CV_Glucose"],
+            stats["Glucose_Variability"],
+
         ]], dtype=np.float32)
 
         return {
