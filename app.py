@@ -3,6 +3,9 @@ from recommender import FoodRecommender
 from config import Config
 from utils import validate_glucose_payload
 
+# ==========================
+# LOAD MODEL
+# ==========================
 @st.cache_resource
 def load_model():
     return FoodRecommender(
@@ -12,18 +15,31 @@ def load_model():
 
 recommender = load_model()
 
-st.title("🍎 CDSS Food Recommender")
+# ==========================
+# UI HEADER
+# ==========================
+st.title("🩺 CDSS - Diabetes Decision Support System")
 
-# Inputs
-risk = st.selectbox("Risk Level", ["low", "medium", "high"])
-current_glucose = st.number_input("Current Glucose", 40, 400, 120)
-carbs_limit = st.number_input("Carbs Limit", 0, 200, 50)
-meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
+# ==========================
+# INPUTS
+# ==========================
+col1, col2 = st.columns(2)
 
-predictions = st.text_input("Predictions (comma-separated)", "120,130,140")
-uncertainty = st.number_input("Uncertainty", 0.0, 1.0, 0.2)
+with col1:
+    risk = st.selectbox("Risk Level", ["low", "medium", "high"])
+    current_glucose = st.number_input("Current Glucose (mg/dL)", 40, 400, 120)
+    carbs_limit = st.number_input("Carbs Limit (g)", 0, 200, 50)
 
-if st.button("Get Recommendation"):
+with col2:
+    meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
+    predictions = st.text_input("Past Predictions (comma-separated)", "120,130,140")
+    uncertainty = st.number_input("Uncertainty", 0.0, 1.0, 0.2)
+
+# ==========================
+# RUN BUTTON
+# ==========================
+if st.button("Run CDSS Analysis"):
+
     try:
         payload = validate_glucose_payload({
             "risk": risk,
@@ -43,8 +59,47 @@ if st.button("Get Recommendation"):
             meal_type=payload["meal_type"]
         )
 
-        st.success("Recommendation generated")
-        st.json(result)
+        # ==========================
+        # 📈 GLUCOSE PREDICTION VIEW
+        # ==========================
+        st.subheader("📈 Glucose Forecast")
+
+        preds = result.get("predictions", {})
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("30 min", f"{preds.get('30min', 0)} mg/dL")
+        c2.metric("60 min", f"{preds.get('60min', 0)} mg/dL")
+        c3.metric("120 min", f"{preds.get('120min', 0)} mg/dL")
+
+        # ==========================
+        # 🍽️ FOOD RECOMMENDATIONS
+        # ==========================
+        st.subheader("🍽️ Food Recommendations")
+
+        foods = result["recommendation"]["foods"]
+        st.dataframe(foods)
+
+        # ==========================
+        # 🏃 ACTIVITY RECOMMENDATION (NEW)
+        # ==========================
+        st.subheader("🏃 Activity Recommendation")
+
+        glucose = current_glucose
+
+        if glucose > 180:
+            activity = "🚶 Light walking (10–15 min) recommended"
+        elif glucose < 80:
+            activity = "🍯 Consume quick glucose + rest"
+        else:
+            activity = "🏃 Moderate activity (20–30 min walk or cycling)"
+
+        st.info(activity)
+
+        # ==========================
+        # 🧠 STRATEGY
+        # ==========================
+        st.subheader("🧠 Clinical Strategy")
+        st.success(result["recommendation"]["strategy"])
 
     except Exception as e:
         st.error(str(e))
