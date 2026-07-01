@@ -1,0 +1,30 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+          git clone https://jaga20220:$HF_TOKEN@huggingface.co/spaces/jaga20220/cdss-app hf-space
+
+          rsync -av --delete --exclude ".git" ./ hf-space/
+
+          cd hf-space
+          git add .
+          git commit -m "Sync from GitHub" || echo "No changes to commit"
+          git push
