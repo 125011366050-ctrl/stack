@@ -2,14 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-# Remove the import here - we'll import inside session_state
-# from engine import GlucoseEngine
-
 st.set_page_config(page_title="CDSS - Diabetes Decision Support System", layout="wide")
 
 st.title("🩺 CDSS - Diabetes Decision Support System")
 
-# ✅ FIX: Use session_state instead of cache_resource
+# Load engine using session state (prevents reinitialization issues)
 if "engine" not in st.session_state:
     from engine import GlucoseEngine
     st.session_state.engine = GlucoseEngine()
@@ -18,11 +15,14 @@ engine = st.session_state.engine
 
 st.subheader("📥 Enter Last 10 CGM Readings (5-min intervals)")
 
+# Default input table (Meal_Flag removed)
 default_rows = pd.DataFrame({
-    "Time": [(datetime.now() - timedelta(minutes=5 * i)).strftime("%H:%M") for i in range(9, -1, -1)],
+    "Time": [
+        (datetime.now() - timedelta(minutes=5 * i)).strftime("%H:%M")
+        for i in range(9, -1, -1)
+    ],
     "Glucose": [120] * 10,
     "HR": [75] * 10,
-    "Meal_Flag": [0] * 10,
     "Carbs": [0] * 10,
     "Protein": [0] * 10,
     "Fat": [0] * 10,
@@ -30,7 +30,7 @@ default_rows = pd.DataFrame({
     "Calories": [0] * 10,
 })
 
-# ✅ IMPROVEMENT: Wrap everything in a form to prevent rerun bugs
+# Form to prevent reruns
 with st.form("cdss_form"):
     entries = st.data_editor(
         default_rows,
@@ -39,21 +39,22 @@ with st.form("cdss_form"):
         column_config={
             "Glucose": st.column_config.NumberColumn(min_value=40, max_value=400),
             "HR": st.column_config.NumberColumn(min_value=30, max_value=220),
-            "Meal_Flag": st.column_config.NumberColumn(min_value=0, max_value=1, step=1),
         }
     )
-    st.caption("Only 10 readings needed — the model pads its 36-step window automatically.")
+
+    st.caption("Only 10 readings needed — model will pad to full sequence length automatically.")
 
     col1, col2 = st.columns(2)
+
     with col1:
         carbs_limit = st.number_input("Carbs Limit (g)", 0, 200, 50)
+
     with col2:
         meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
 
-    # ✅ Use form_submit_button instead of button
     submitted = st.form_submit_button("Run CDSS Analysis", type="primary")
 
-# ✅ Process form submission
+# Run inference
 if submitted:
     try:
         result = engine.run(
@@ -63,7 +64,9 @@ if submitted:
         )
 
         st.subheader("📈 Glucose Forecast")
+
         preds = result["predictions"]
+
         c1, c2, c3 = st.columns(3)
         c1.metric("30 min", f"{preds.get('30min', 0)} mg/dL")
         c2.metric("60 min", f"{preds.get('60min', 0)} mg/dL")
@@ -73,13 +76,16 @@ if submitted:
         st.dataframe(result["recommendation"]["foods"])
 
         st.subheader("🏃 Activity Recommendation")
+
         current_glucose = float(entries["Glucose"].iloc[-1])
+
         if current_glucose > 180:
             activity = "🚶 Light walking (10–15 min) recommended"
         elif current_glucose < 80:
             activity = "🍯 Consume quick glucose + rest"
         else:
             activity = "🏃 Moderate activity (20–30 min walk or cycling)"
+
         st.info(activity)
 
         st.subheader("🧠 Clinical Strategy")
