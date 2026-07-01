@@ -6,7 +6,7 @@ class Config:
     # Food database
     EXCEL_PATH = os.environ.get(
         "EXCEL_PATH",
-        "Indian_Foods_GI_GL_Database.xlsx"
+         "data/Indian_Foods_GI_GL_Database.xlsx"
     )
 
     # Model artifacts directory (flat repo root)
