@@ -2,15 +2,19 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-from engine import GlucoseEngine
+# Remove the import here - we'll import inside session_state
+# from engine import GlucoseEngine
 
-@st.cache_resource
-def load_engine():
-    return GlucoseEngine()
-
-engine = load_engine()
+st.set_page_config(page_title="CDSS - Diabetes Decision Support System", layout="wide")
 
 st.title("🩺 CDSS - Diabetes Decision Support System")
+
+# ✅ FIX: Use session_state instead of cache_resource
+if "engine" not in st.session_state:
+    from engine import GlucoseEngine
+    st.session_state.engine = GlucoseEngine()
+
+engine = st.session_state.engine
 
 st.subheader("📥 Enter Last 10 CGM Readings (5-min intervals)")
 
@@ -26,25 +30,31 @@ default_rows = pd.DataFrame({
     "Calories": [0] * 10,
 })
 
-entries = st.data_editor(
-    default_rows,
-    num_rows="fixed",
-    use_container_width=True,
-    column_config={
-        "Glucose": st.column_config.NumberColumn(min_value=40, max_value=400),
-        "HR": st.column_config.NumberColumn(min_value=30, max_value=220),
-        "Meal_Flag": st.column_config.NumberColumn(min_value=0, max_value=1, step=1),
-    }
-)
-st.caption("Only 10 readings needed — the model pads its 36-step window automatically.")
+# ✅ IMPROVEMENT: Wrap everything in a form to prevent rerun bugs
+with st.form("cdss_form"):
+    entries = st.data_editor(
+        default_rows,
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "Glucose": st.column_config.NumberColumn(min_value=40, max_value=400),
+            "HR": st.column_config.NumberColumn(min_value=30, max_value=220),
+            "Meal_Flag": st.column_config.NumberColumn(min_value=0, max_value=1, step=1),
+        }
+    )
+    st.caption("Only 10 readings needed — the model pads its 36-step window automatically.")
 
-col1, col2 = st.columns(2)
-with col1:
-    carbs_limit = st.number_input("Carbs Limit (g)", 0, 200, 50)
-with col2:
-    meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
+    col1, col2 = st.columns(2)
+    with col1:
+        carbs_limit = st.number_input("Carbs Limit (g)", 0, 200, 50)
+    with col2:
+        meal_type = st.selectbox("Meal Type", ["breakfast", "lunch", "dinner"])
 
-if st.button("Run CDSS Analysis"):
+    # ✅ Use form_submit_button instead of button
+    submitted = st.form_submit_button("Run CDSS Analysis", type="primary")
+
+# ✅ Process form submission
+if submitted:
     try:
         result = engine.run(
             entries=entries,
@@ -76,4 +86,4 @@ if st.button("Run CDSS Analysis"):
         st.success(result["recommendation"]["strategy"])
 
     except Exception as e:
-        st.error(str(e))
+        st.error(f"❌ Error: {str(e)}")
